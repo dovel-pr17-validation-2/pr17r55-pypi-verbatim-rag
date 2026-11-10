@@ -1,0 +1,251 @@
+# Contributing to Verbatim RAG
+
+Thanks for your interest in contributing. Verbatim has a lightweight extraction
+package and a broader reference RAG stack, so first identify which surface your
+change affects.
+
+## Repository structure
+
+```text
+packages/core/verbatim_core/   # verbatim-core: question + context -> cited excerpts
+verbatim_rag/                  # verbatim-rag: retrieval, indexing, and orchestration
+api/                           # FastAPI development surface
+frontend/                      # Vite/React development UI
+tests/                         # network-free verbatim-core tests
+docs/                          # MkDocs documentation
+```
+
+Research training and canonical paper evaluation live in
+[`KRLabsOrg/acl-verbatim`](https://github.com/KRLabsOrg/acl-verbatim), not in
+the supported runtime API of this repository.
+
+## Setup
+
+Create a Python 3.10+ virtual environment, then install the surface you need.
+
+```bash
+git clone https://github.com/KRLabsOrg/verbatim-rag.git
+cd verbatim-rag
+python -m venv .venv
+source .venv/bin/activate
+
+# Lightweight extraction development
+pip install -e packages/core/
+pip install pytest pytest-asyncio ruff build twine
+
+# Full RAG package development
+pip install -e packages/core/
+pip install -e ".[dev]"
+```
+
+The core runtime depends on `openai`, `pydantic`, `rapidfuzz`, `jinja2`, and
+`typing_extensions`.
+The optional model extra and full RAG package add substantially heavier ML,
+document-processing, and vector-store dependencies.
+
+### Git hooks (prek)
+
+Install the git hooks with [prek](https://prek.j178.dev/installation/#pypi).
+**Using the pre-commit hook is required for contributions**: it runs ruff,
+file hygiene checks, lock-file sync and security checks (`prek.toml`) before
+every commit, and CI runs the same hooks. `api/`, `frontend/` and `docs/` are
+currently excluded.
+
+```bash
+uv tool install prek==0.5.7
+uv tool install ruff==0.16.10   # also used directly for the manual checks below
+uv tool install ty==0.0.94      # the ty hook runs the locally installed `ty`
+
+# Security tooling
+uv tool install detect-secrets==1.5.0   # secret detection (baseline: .secrets.baseline)
+uv tool install zizmor==1.31.1          # GitHub Actions security audit
+brew install actionlint shellcheck   # GitHub Actions and shell script linting
+```
+
+`actionlint` and `shellcheck` are not on PyPI. On other platforms, follow the
+[actionlint installation guide](https://github.com/rhysd/actionlint/blob/main/docs/install.md)
+(e.g. `go install github.com/rhysd/actionlint/cmd/actionlint@latest` or the
+download script) and the
+[shellcheck installation guide](https://github.com/koalaman/shellcheck#installing)
+(e.g. `sudo apt install shellcheck`).
+
+If `detect-secrets` flags a false positive, review it and update the baseline
+with `detect-secrets scan --baseline .secrets.baseline`; never add a real secret
+to the baseline.
+
+```bash
+prek install                         # pre-commit hooks, run before every commit
+prek install --hook-type pre-push    # pytest, package build and pip-audit before push
+```
+
+Run the hooks manually on all files (this may modify files):
+
+```bash
+prek run --all-files
+```
+
+Keep the hook repository references (`rev`) in `prek.toml` up to date. Update
+them periodically, and whenever you touch the hook configuration:
+
+```bash
+prek update
+```
+
+Review the `prek.toml` diff, run `prek run --all-files`, and include the bump in
+your PR. Keep the locally installed tools current too (`uv tool upgrade --all`).
+
+## Verification
+
+Run the checks that match the files you changed and list the exact commands in
+your pull request. The prek hooks cover linting, formatting, tests, packaging
+and dependency auditing; to run the individual commands by hand:
+
+```bash
+pytest tests/ -v
+ruff format --check packages/core/verbatim_core/ verbatim_rag/ api/ tests/
+ruff check packages/core/verbatim_core/ verbatim_rag/ api/ tests/
+```
+
+`tests/test_recorded_outputs.py` compares the output of the public entry points
+with recordings in `tests/recordings/`. If your change alters that output on
+purpose, rewrite the recordings with
+`RECORD_OUTPUTS=1 pytest tests/test_recorded_outputs.py`, with the full
+verbatim-rag package installed, and explain the diff in your pull request.
+
+For packaging changes:
+
+```bash
+python -m build packages/core
+python -m build .
+```
+
+For frontend changes:
+
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+CI currently gates the network-free `verbatim-core` tests on Python 3.10–3.12,
+the prek pre-commit hooks (Ruff and file checks), dependency auditing for the
+core package, and distribution builds. A green core test matrix does not by
+itself validate model downloads, the API, or the frontend; include focused
+tests for those surfaces in the same PR.
+
+## Issues and discussions
+
+Use [Discussions](https://github.com/KRLabsOrg/verbatim-rag/discussions) for
+questions, early designs, research directions, and uncertain product ideas. Use
+an issue for a reproducible bug or a bounded implementation with testable
+acceptance criteria.
+
+Labels clarify readiness:
+
+- `good first issue` is a small, independently testable change with code
+  pointers, non-goals, and a start command;
+- `help wanted` is ready for outside implementation or investigation but may
+  require more context than a first issue;
+- `design` needs an interface or behavior decision before implementation;
+- `research` is exploratory and may end in a negative result or design note;
+- `correctness` affects extraction, provenance, evaluation, or another stated
+  contract;
+- `status: claimed` means someone is actively working on it—coordinate before
+  starting a competing implementation.
+
+Comment on an unclaimed contributor issue before doing substantial work.
+Maintainers will assign it or add `status: claimed`. If the issue changes after
+investigation, post the evidence before expanding the PR.
+
+## Pull requests
+
+1. Branch from `main` and keep the PR focused on one issue or decision.
+2. Add tests for behavior and regression fixes.
+3. Explain any change to span validation, citations, templates, schemas,
+   defaults, or compatibility.
+4. Update public documentation and `CHANGELOG.md` for user-facing behavior.
+5. Remove credentials and private document text from tests, logs, and fixtures.
+6. Follow the rules in [Errors and logging](#errors-and-logging).
+7. Complete the contribution-rights checkbox in the PR template. CI enforces it.
+
+## Errors and logging
+
+These rules apply to library code in `verbatim_core` and `verbatim_rag`. The
+API server, the CLIs and the training code in `extractor_models/` are
+applications: they configure logging in their entry point and may print.
+
+Errors:
+
+- A call returns a correct result or raises. A result that is degraded but
+  still correct says so in its `warnings`. A result that looks complete while
+  part of the work failed is a bug.
+- The error class follows where the bad value came from:
+  - `InvalidInputError` for an argument of the call, with `param` naming it
+    (`chunks[3].id`)
+  - `ConfigurationError` for a constructor argument, a setting, an environment
+    variable or a missing package
+  - `UpstreamError` for a failed or missing reply from a service
+  - errors in our own code (`KeyError`, `TypeError`, ...) propagate unwrapped.
+- Every error and every result warning has a stable snake_case `code`. Codes
+  are public API.
+- Messages name the problem and the fix. They never contain secrets or customer
+  text: no question, chunk, quote, span text, chunk id or metadata value. Refer
+  to items by position (`chunks[3]`). Pydantic models that hold such data set
+  `hide_input_in_errors=True`.
+- Adapters translate foreign errors with `raise ... from e`. Log or raise,
+  never both. Don't write `except Exception`, except at an application boundary
+  or around code we don't control, with a comment that says why.
+- A fallback catches only `UpstreamError`, adds a warning to the result and is
+  documented with its warning code. `ConfigurationError`, `InvalidInputError`
+  and bugs never trigger one.
+- `warnings.warn` is only for deprecations, with `VerbatimDeprecationWarning`.
+- Library code never calls a deprecated name. The test suite turns
+  `VerbatimDeprecationWarning` into an error, so a test that calls an old entry
+  point expects the warning with `pytest.warns`. A new deprecation adds its
+  entry point to the catalogue in `tests/test_deprecation.py`.
+
+Logging:
+
+- Each module logs through `logging.getLogger(__name__)`. Library code never
+  prints, never draws a progress bar the caller didn't ask for, and never
+  configures logging: no handlers, levels or `basicConfig`.
+- Messages use %-style arguments, never f-strings, and fit on one line. Key
+  events add `extra={"event": ...}`: `model_loaded`, `documents_ingested`,
+  `fallback_used` (with `warning_code`) and `item_failed` (with `error_code`).
+- Levels:
+  - DEBUG for the steps of a call
+  - INFO for what an operator wants in a healthy log: a model loaded, documents
+    ingested, a retry
+  - WARNING for a degraded result
+  - ERROR only where no caller can receive the exception.
+- Customer text is logged only on `verbatim_core.content` or
+  `verbatim_rag.content`, and only at DEBUG. The module loggers carry counts
+  and positions.
+
+## Contribution rights
+
+By submitting a pull request you confirm that you wrote the contribution (or
+have the right to submit it) and that it may be distributed under this
+repository's MIT license. This is what the required checkbox in the PR template
+attests. You may also sign off commits with `git commit -s`
+([DCO](https://developercertificate.org/)); appreciated, not required.
+
+## Releasing
+
+`verbatim-core` and `verbatim-rag` currently share a version number.
+
+1. Update `packages/core/pyproject.toml`, `pyproject.toml`, and
+   `verbatim_rag/__init__.py` together.
+2. Update `CHANGELOG.md`.
+3. Build both distributions and inspect them.
+4. Tag the release and publish `verbatim-core` before `verbatim-rag`.
+
+```bash
+python -m build packages/core
+python -m build .
+twine check packages/core/dist/* dist/*
+```
+
+## Code of Conduct
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
